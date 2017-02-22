@@ -1,5 +1,5 @@
 import glob
-
+from moviepy.editor import VideoFileClip
 import cv2
 import matplotlib.image as mpimg
 import matplotlib.pyplot as plt
@@ -104,8 +104,8 @@ class ProcessPipeline:
         return out
 
 
-def run():
-    img = mpimg.imread('test_images/straight_lines1.jpg')
+def run_single():
+    # img = mpimg.imread('test_images/straight_lines1.jpg')
     img = mpimg.imread('test_images/test5.jpg')
     pipeline = ProcessPipeline()
 
@@ -115,5 +115,18 @@ def run():
     plt.show()
 
 
+def run_video(filename='video/project_video.mp4'):
+    pipeline = ProcessPipeline()
+
+    def process_image(image):
+        out = pipeline.process(image)
+        return out
+
+    clip1 = VideoFileClip(filename)
+    white_clip = clip1.fl_image(process_image)
+    white_clip.write_videofile('video/output.mp4', audio=False)
+
+
 if __name__ == '__main__':
-    run()
+    # run_single()
+    run_video()
