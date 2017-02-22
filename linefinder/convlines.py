@@ -1,4 +1,6 @@
 import cv2
+import matplotlib.image as mpimg
+import matplotlib.pyplot as plt
 import numpy as np
 
 
@@ -21,8 +23,8 @@ def get_window_size(img):
 
 def find_window_centroids(img, window_width, window_height, margin):
     # Store the (left,right) window centroid positions per level
-    # window_centroids = np.zeros([img.shape[0] / window_height, 2], np.float32)
-    window_centroids = []  # Store the (left,right) window centroid positions per level
+    window_centroids = np.zeros([img.shape[0] // window_height, 2], np.float32)
+    # window_centroids = []  # Store the (left,right) window centroid positions per level
     window = np.ones(window_width)  # Create our window template that we will use for convolutions
 
     # First find the two starting positions for the left and right lane by using np.sum
@@ -36,8 +38,8 @@ def find_window_centroids(img, window_width, window_height, margin):
     r_center = np.argmax(np.convolve(window, r_sum)) - window_width / 2 + int(img.shape[1] / 2)
 
     # Add what we found for the first layer
-    # window_centroids[0, :] = [l_center, r_center]
-    window_centroids.append((l_center, r_center))
+    window_centroids[0, :] = [l_center, r_center]
+    # window_centroids.append((l_center, r_center))
 
     # Go through each layer looking for max pixel locations
     for level in range(1, (int)(img.shape[0] / window_height)):
@@ -57,8 +59,8 @@ def find_window_centroids(img, window_width, window_height, margin):
         r_max_index = int(min(r_center + offset + margin, img.shape[1]))
         r_center = np.argmax(conv_signal[r_min_index:r_max_index]) + r_min_index - offset
         # Add what we found for that layer
-        # window_centroids[level] = (l_center, r_center)
-        window_centroids.append((l_center, r_center))
+        window_centroids[level] = [l_center, r_center]
+        # window_centroids.append((l_center, r_center))
     return window_centroids
 
 
@@ -90,15 +92,87 @@ def get_convoluted_lines(img):
     return None, None
 
 
-if __name__ == '__main__':
-    import matplotlib.image as mpimg
-    import matplotlib.pyplot as plt
+def get_left_right_lanes(img):
+    window_width, window_height, margin = get_window_size(img)
+    c = find_window_centroids(img, window_width, window_height, margin)
+    leftx = c[:, 0]
+    rightx = c[:, 1]
+    img_size = img.shape
+    ploty = np.linspace(0, img_size[0] - 1,
+                        num=img_size[0] // window_height)  # the Y of the detected windows
 
+    left_fit = np.polyfit(ploty, leftx, 2)
+    right_fit = np.polyfit(ploty, rightx, 2)
+    return left_fit, right_fit
+
+
+def radius_in_meters(y, leftx, rightx,
+                     YM_PER_PIX=30 / 720,  # meters per pixel in y dimension
+                     XM_PER_PIX=3.7 / 700,  # meters per pixel in x dimension
+                     ):
+    y_eval = np.max(y)
+    # Fit new polynomials to x,y in world space
+    left_fit_cr = np.polyfit(y * YM_PER_PIX, leftx * XM_PER_PIX, 2)
+    right_fit_cr = np.polyfit(y * YM_PER_PIX, rightx * XM_PER_PIX, 2)
+    # Calculate the new radii of curvature
+    left_curverad = ((1 + (
+        2 * left_fit_cr[0] * y_eval * YM_PER_PIX + left_fit_cr[1]) ** 2) ** 1.5) \
+                    / np.absolute(2 * left_fit_cr[0])
+    right_curverad = ((1 + (
+        2 * right_fit_cr[0] * y_eval * YM_PER_PIX + right_fit_cr[1]) ** 2) ** 1.5) \
+                     / np.absolute(2 * right_fit_cr[0])
+    # Now our radius of curvature is in meters
+    return (left_curverad, right_curverad)
+    # Example values: 632.1 m    626.2 m
+
+
+def get_line_points(img):
+    img_size = img.shape
+    fully = np.linspace(0, img_size[0] - 1,
+                        num=img_size[0])  # to cover same y-range as image
+
+    left_fit, right_fit = get_left_right_lanes(img)
+    left_fitx = left_fit[0] * fully ** 2 + left_fit[1] * fully + left_fit[2]
+    right_fitx = right_fit[0] * fully ** 2 + right_fit[1] * fully + right_fit[2]
+
+    return fully, left_fitx, right_fitx
+
+
+def line_on_the_road(warped, undist, Minv, image, y, leftx, rightx):
+    # Create an image to draw the lines on
+    warp_zero = np.zeros_like(warped).astype(np.uint8)
+    color_warp = np.dstack((warp_zero, warp_zero, warp_zero))
+
+    # Recast the x and y points into usable format for cv2.fillPoly()
+    pts_left = np.array([np.transpose(np.vstack([leftx, y]))])
+    pts_right = np.array([np.flipud(np.transpose(np.vstack([rightx, y])))])
+    pts = np.hstack((pts_left, pts_right))
+
+    # Draw the lane onto the warped blank image
+    cv2.fillPoly(color_warp, np.int_([pts]), (0, 255, 0))
+    color_warp = np.flipud(color_warp)
+
+    # Warp the blank back to original image space using inverse perspective matrix (Minv)
+    newwarp = cv2.warpPerspective(color_warp, Minv, (image.shape[1], image.shape[0]))
+    # Combine the result with the original image
+    result = cv2.addWeighted(undist, 1, newwarp, 0.3, 0)
+    return result
+
+
+if __name__ == '__main__':
     warped = mpimg.imread('warped_example.png')
-    warped = cv2.cvtColor(warped, cv2.COLOR_BGR2GRAY)
-    l, r = get_convoluted_lines(warped)
-    # l = centers[:, 0]
-    # r = centers[:, 1]
-    plt.imshow(l | r)
-    plt.title('window fitting results')
-    plt.show()
+    img = cv2.cvtColor(warped, cv2.COLOR_BGR2GRAY)
+
+    if False:
+        # get the left and right binary images
+        l, r = get_convoluted_lines(warped)
+        # l = centers[:, 0]
+        # r = centers[:, 1]
+        plt.imshow(l | r)
+        plt.title('window fitting results')
+        plt.show()
+
+    if True:
+        lines = get_line_points(img)
+        print(radius_in_meters(*lines))
+        line_on_the_road(warped, warped, )
