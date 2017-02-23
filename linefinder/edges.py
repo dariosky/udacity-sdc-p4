@@ -3,8 +3,8 @@ import numpy as np
 
 
 def binary(img,
-           sobelx_thresh=(20, 200),
-           luminosity_thresh=(200, 255),
+           sobelx_thresh=(20, 250),
+           luminosity_thresh=(230, 255),
            saturation_thresh=(200, 255),
            ):
     """ Give a color image, get a binary image with edges combining sobelx gradient

@@ -1,6 +1,4 @@
 import cv2
-import matplotlib.image as mpimg
-import matplotlib.pyplot as plt
 import numpy as np
 
 
@@ -122,8 +120,7 @@ def radius_in_meters(y, leftx, rightx,
         2 * right_fit_cr[0] * y_eval * YM_PER_PIX + right_fit_cr[1]) ** 2) ** 1.5) \
                      / np.absolute(2 * right_fit_cr[0])
     # Now our radius of curvature is in meters
-    return (left_curverad, right_curverad)
-    # Example values: 632.1 m    626.2 m
+    return left_curverad, right_curverad
 
 
 def get_line_points(img):
@@ -135,10 +132,18 @@ def get_line_points(img):
     left_fitx = left_fit[0] * fully ** 2 + left_fit[1] * fully + left_fit[2]
     right_fitx = right_fit[0] * fully ** 2 + right_fit[1] * fully + right_fit[2]
 
-    return fully, left_fitx, right_fitx
+    # let's get where are the lane at the camera position - bottom of screen
+    y = 0
+    left_pos = left_fit[0] * y ** 2 + left_fit[1] * y + left_fit[2]
+    right_pos = right_fit[0] * y ** 2 + right_fit[1] * y + right_fit[2]
+    extra = dict(
+        left_pos=left_pos,
+        right_pos=right_pos,
+    )
+    return fully, left_fitx, right_fitx, extra
 
 
-def line_on_the_road(warped, undist, Minv, image, y, leftx, rightx):
+def line_on_the_road(warped, undist, Minv, image, y, leftx, rightx, unwarp=True):
     # Create an image to draw the lines on
     warp_zero = np.zeros_like(warped).astype(np.uint8)
     color_warp = np.dstack((warp_zero, warp_zero, warp_zero))
@@ -152,27 +157,10 @@ def line_on_the_road(warped, undist, Minv, image, y, leftx, rightx):
     cv2.fillPoly(color_warp, np.int_([pts]), (0, 255, 0))
     color_warp = np.flipud(color_warp)
 
+    if unwarp is False:
+        return color_warp
     # Warp the blank back to original image space using inverse perspective matrix (Minv)
     newwarp = cv2.warpPerspective(color_warp, Minv, (image.shape[1], image.shape[0]))
     # Combine the result with the original image
     result = cv2.addWeighted(undist, 1, newwarp, 0.3, 0)
     return result
-
-
-if __name__ == '__main__':
-    warped = mpimg.imread('warped_example.png')
-    img = cv2.cvtColor(warped, cv2.COLOR_BGR2GRAY)
-
-    if False:
-        # get the left and right binary images
-        l, r = get_convoluted_lines(warped)
-        # l = centers[:, 0]
-        # r = centers[:, 1]
-        plt.imshow(l | r)
-        plt.title('window fitting results')
-        plt.show()
-
-    if True:
-        lines = get_line_points(img)
-        print(radius_in_meters(*lines))
-        line_on_the_road(warped, warped, )
