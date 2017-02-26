@@ -11,7 +11,7 @@ def binary(img,
         and tresholded saturation channel and luminosity
     """
     # Convert to HSV color space and separate the V channel
-    hls = cv2.cvtColor(img, cv2.COLOR_RGB2HLS).astype(np.float)
+    hls = cv2.cvtColor(img, cv2.COLOR_RGB2HLS).astype(np.uint8)
     l_channel = hls[:, :, 1]
     saturation_channel = hls[:, :, 2]
 

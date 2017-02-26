@@ -25,7 +25,7 @@ def get_dstbox(bbox, shape):
     miny, maxy = min(y for y, x in bbox), max(y for y, x in bbox)
     return np.float32([
         (imgmaxy, minx),  # bottom left
-        (0, minx),  # top right
+        (0, minx),  # top left
         (imgmaxy, maxx),  # bottom right
         (0, maxx),  # top right
     ])
