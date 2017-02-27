@@ -6,13 +6,16 @@ import cv2
 import matplotlib.image as mpimg
 import matplotlib.pyplot as plt
 import numpy as np
+from blinker import signal
+from matplotlib.axes import Subplot
 from moviepy.editor import VideoFileClip
 
 from linefinder.birdeye import get_dstbox, asphalt_box
 from linefinder.camera_calibration import get_calibration_points
-from linefinder.convlines import get_line_points, radius_in_meters, line_on_the_road
+from linefinder.lines import get_line_points, radius_in_meters, line_on_the_road
 from linefinder.edges import binary
-from blinker import signal
+
+plt.rcParams["figure.figsize"] = (20, 10)
 
 
 class Steps:
@@ -86,8 +89,13 @@ class ProcessPipeline:
             self.camera_calibration(self.img_size)
 
     def load(self, img):
+        if img.dtype != 'uint8':
+            img = (img * 255).astype('uint8')
+        if len(img.shape) == 3 and img.shape[-1] == 4:
+            img = img[:, :, :3]  # discard alpha channel
         self.img = img  # keep the original image with the process
         self.img_size = self.img.shape[:2]
+        return img
 
     def save(self, img, name):
         step = self._save_step
@@ -102,7 +110,10 @@ class ProcessPipeline:
 
     def plot(self, img):
         step = self._plot_step
-        self.plot_axes[step].imshow(img)
+        axe = self.plot_axes
+        if not isinstance(axe, Subplot):
+            axe = self.plot_axes[step]
+        axe.imshow(img)
         self._plot_step += 1
 
     def undistort(self, img):
@@ -112,7 +123,7 @@ class ProcessPipeline:
     def process(self, img,
                 plot_steps=(),
                 ):
-        self.load(img)
+        img = self.load(img)
 
         if plot_steps:
             f, self.plot_axes = plt.subplots(len(plot_steps))
@@ -140,9 +151,12 @@ class ProcessPipeline:
         self.Minv = cv2.getPerspectiveTransform(dstbox_xy,
                                                 srcbox_xy)
 
-        # if plot_steps:
+        # if Steps.undistort in plot_steps:
+        #     # when we plot the warp, let's put the ticks in the undist
         #     for x, y in asphalt_box:
-        #         axes[step].plot(y, x, 'o', color='red', markersize=6)
+        #         plt.plot(
+        #             y, x, 'o', color='red', markersize=6
+        #         )
 
         self.warped = cv2.warpPerspective(self.undist, self.M,
                                           self.img_size[::-1],
@@ -175,7 +189,6 @@ class ProcessPipeline:
             warped_lines = line_on_the_road(gray,
                                             self.undist,
                                             self.Minv,
-                                            self.img,
                                             y, leftx, rightx,
                                             unwarp=False)
             if self.save_steps:
@@ -187,7 +200,6 @@ class ProcessPipeline:
         out = line_on_the_road(gray,
                                self.undist,
                                self.Minv,
-                               self.img,
                                y, leftx, rightx,
                                )
         font = cv2.FONT_HERSHEY_SIMPLEX
@@ -209,11 +221,11 @@ class ProcessPipeline:
         return out
 
 
-def run_single(filename):
+def run_single(filename, show_steps=True, save_steps=False):
     img = mpimg.imread(filename)
     pipeline = ProcessPipeline()
 
-    if False:  # set to True to enable extra output_images saves
+    if save_steps:  # set to True to enable extra output_images saves
         pipeline.save_steps = True
         pipeline.save_camera_calibration_examples()
 
@@ -225,10 +237,10 @@ def run_single(filename):
             # Steps.original,
             Steps.undistort,
             Steps.warp,
-            # Steps.binary,
-            # Steps.detect_lines,
-            # Steps.lines_on_road,
-        )
+            Steps.binary,
+            Steps.detect_lines,
+            Steps.lines_on_road,
+        ) if show_steps else ()
     )
 
 
@@ -240,14 +252,14 @@ def run_video(filename='video/project_video.mp4'):
         out = pipeline.process(image, plot_steps=[])
         return out
 
-    clip1 = VideoFileClip(filename).subclip(t_end=1)
+    clip1 = VideoFileClip(filename)  # .subclip(t_end=1)
     white_clip = clip1.fl_image(process_image)
     output_video_filename = 'video/{prefix}_output.mp4'.format(prefix=pipeline.output_prefix)
     white_clip.write_videofile(output_video_filename, audio=False)
 
 
 def run_sequence():
-    image_sequence = sorted(glob.glob("test_images/sequence/*.png"))[1:2]
+    image_sequence = sorted(glob.glob("test_images/sequence/*.jpg"))[0:3]
     # pipeline = ProcessPipeline()
     # pipeline.output_prefix = "sequence"
     for filename in image_sequence:
@@ -259,7 +271,18 @@ def run_sequence():
         # plt.show()
 
 
+def extract_sequence(filename='video/project_video.mp4'):
+    clip = VideoFileClip(filename).subclip(t_end=5)  # get the start of video
+
+    for t in range(10):
+        filename = "test_images/sequence/frame_%0d.jpg" % t
+        print("Extracting frame", filename)
+        clip.save_frame(filename, t=t / 2)  # save every half second
+
+
 if __name__ == '__main__':
-    run_single('test_images/test1.jpg')
+    run_single('test_images/test5.jpg')
+    # run_single('test_images/test_dots.png')
     # run_video()
     # run_sequence()
+    # extract_sequence()
