@@ -1,15 +1,15 @@
 import cv2
 import numpy as np
 from blinker import signal
-import matplotlib.pyplot as plt
+from matplotlib import pyplot as plt
 
 lane_message = signal('lane_message')
 
 MIN_FOR_DETECTION = 10  # number of points on sum to consider a line
 MAX_MISSING_WINDOWS = 4  # number of missing windows allowed before a blind-scan
-WINDOWS_Y = 7
-WINDOWS_X = 25
-
+WINDOWS_Y = 8
+WINDOWS_X = 30
+DEBUG = False
 
 def window_mask(width, height, img_ref, center, level):
     output = np.zeros_like(img_ref)
@@ -32,17 +32,21 @@ def convolve_and_get_center(conv_signal, start, end, offset):
     """ Keep in a function the part of choosing the center from the convolution """
     conv_window = conv_signal[start:end]
     center = np.argmax(conv_window)  # this is the candidate center
-    if conv_window[
-        center] < MIN_FOR_DETECTION:  # we don't have enough points to be sure of the center
+    if conv_window[center] < MIN_FOR_DETECTION:
+        # we don't have enough points to be sure of the center
         # DONE: When nothing is found, convolution was drifting left of offset
-        # print("convolve: not enought points")
         return None
     else:
         return center + start - offset
 
 
 def find_window_centroids(img, window_width, window_height, margin,
-                          suggested_centers=None, debug_mode=False):
+                          suggested_centers=None):
+    if False:
+        print(img.shape, img.dtype, window_width, window_height, margin)
+        plt.figure()
+        plt.imshow(img)
+        plt.show()
     # Store the (left,right) window centroid positions per level
     # img = np.zeros_like(img)
     # img[:, 100] = 1
@@ -65,7 +69,7 @@ def find_window_centroids(img, window_width, window_height, margin,
         l_center = np.argmax(np.convolve(window, l_sum)) - window_width / 2
         r_sum = np.sum(img[int(2 * maxy / 4):, int(img.shape[1] / 2):], axis=0)
         r_center = np.argmax(np.convolve(window, r_sum)) - window_width / 2 + int(img.shape[1] / 2)
-        if debug_mode:
+        if DEBUG:
             print("start with", l_center, r_center)
 
         # Add what we found for the first layer
@@ -73,7 +77,7 @@ def find_window_centroids(img, window_width, window_height, margin,
         starting_level = 1
     else:
         l_center, r_center = suggested_centers
-        if debug_mode:
+        if DEBUG:
             print("start with suggested", l_center, r_center)
         starting_level = 0
 
@@ -90,11 +94,11 @@ def find_window_centroids(img, window_width, window_height, margin,
         # Use window_width/2 as offset because convolution signal reference
         #   is at right side of window, not center of window
         offset = window_width / 2
-        l_min_index = int(max(l_center + offset - margin, 0))
+        l_min_index = int(max(l_center - offset - margin, 0))
         l_max_index = int(min(l_center + offset + margin, img.shape[1]))
 
         # Find the best right centroid by using past right center as a reference
-        r_min_index = int(max(r_center + offset - margin, 0))
+        r_min_index = int(max(r_center - offset - margin, 0))
         r_max_index = int(min(r_center + offset + margin, img.shape[1]))
 
         # Add what we found for that layer
@@ -102,37 +106,45 @@ def find_window_centroids(img, window_width, window_height, margin,
         pre_l_center = l_center
         l_center = convolve_and_get_center(conv_signal, l_min_index, l_max_index, offset)
         if l_center is None:
+            if DEBUG:
+                print("convolve: not enough points on left lane level %d" % level)
             l_center = pre_l_center
             missing_windows += 1
 
         pre_r_center = r_center
         r_center = convolve_and_get_center(conv_signal, r_min_index, r_max_index, offset)
         if r_center is None:
+            if DEBUG:
+                print("convolve: not enough points on right lane level %d" % level)
             r_center = pre_r_center
             missing_windows += 1
 
         if missing_windows > MAX_MISSING_WINDOWS:
             if suggested_centers:
                 # we have too many missing windows, let's do a blind scan
+                if DEBUG:
+                    print("Fallback to blind scan")
                 return find_window_centroids(
                     img, window_width, window_height, margin,
-                    suggested_centers=None, debug_mode=debug_mode
+                    suggested_centers=None
                 )
             else:
                 # we were already in blindscan - no detections
+                if DEBUG:
+                    print("No detections")
                 return None
         # if debug_mode: print(l_center, r_center)
         window_centroids[level] = [l_center, r_center]
-    if debug_mode: print("end with", l_center, r_center)
+    if DEBUG:
+        print("end with", l_center, r_center)
     return window_centroids
 
 
 def get_convoluted_lines(binary):
     window_width, window_height, margin = get_window_size(binary)
-
     window_centroids = find_window_centroids(binary, window_width, window_height, margin)
     # If we found any window centers
-    if window_centroids:
+    if window_centroids is not None:
         # Points used to draw all the left and right windows
         l_points = np.zeros_like(binary, dtype=np.uint8)
         r_points = np.zeros_like(binary, dtype=np.uint8)
@@ -241,12 +253,13 @@ def line_on_the_road(binary, undist, Minv, y, leftx, rightx, unwarp=True):
     color_warp = warp_zero
 
     # Recast the x and y points into usable format for cv2.fillPoly()
-    pts_left = np.array([np.transpose(np.vstack([leftx, y]))])
-    pts_right = np.array([np.flipud(np.transpose(np.vstack([rightx, y])))])
-    pts = np.hstack((pts_left, pts_right))
+    if leftx is not None and rightx is not None:
+        pts_left = np.array([np.transpose(np.vstack([leftx, y]))])
+        pts_right = np.array([np.flipud(np.transpose(np.vstack([rightx, y])))])
+        pts = np.hstack((pts_left, pts_right))
 
-    # Draw the lane onto the warped blank image
-    cv2.fillPoly(color_warp, np.int_([pts]), 255)
+        # Draw the lane onto the warped blank image
+        cv2.fillPoly(color_warp, np.int_([pts]), 255)
 
     if unwarp is False:
         points_1l, points_1r = get_convoluted_lines(binary)

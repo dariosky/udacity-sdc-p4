@@ -55,6 +55,8 @@ class ProcessPipeline:
         self.previous_centers = None
         self.previous_fit = None
 
+        self.radii = (0, 0)
+
     def message_subscribe(self):
         """ Subscribe to lane_message events, they can arrive from the pipeline """
         signal('lane_message').connect(self.on_lane_message)
@@ -188,8 +190,15 @@ class ProcessPipeline:
         self.previous_centers = extra['left_pos'], extra['right_pos']
         self.previous_fit = extra['left_fit'], extra['right_fit']
 
-        lane_center = statistics.mean([extra['left_pos'], extra['right_pos']])
-        self.distance_from_center = (self.img_size[1] // 2 - lane_center) * self.XM_PER_PIX
+        if not all([extra['left_pos'], extra['right_pos']]):
+            signal('lane_message').send("Can't find lane")
+            self.radii = None
+            self.distance_from_center = None
+        else:
+            lane_center = statistics.mean([extra['left_pos'], extra['right_pos']])
+            self.distance_from_center = (self.img_size[1] // 2 - lane_center) * self.XM_PER_PIX
+            # get the curvature radius (in meters)
+            self.radii = radius_in_meters(y, leftx, rightx)
 
         gray = cv2.cvtColor(self.warped, cv2.COLOR_RGB2GRAY)
 
@@ -211,12 +220,13 @@ class ProcessPipeline:
                                y, leftx, rightx,
                                )
         font = cv2.FONT_HERSHEY_SIMPLEX
-        # get the curvature radius (in meters)
-        self.radii = radius_in_meters(y, leftx, rightx)
-        cv2.putText(out, "radii {:.0f}m {:.0f}m".format(*self.radii), (50, 50),
-                    font, 1, (255, 100, 100), 2, cv2.LINE_AA)
-        cv2.putText(out, "center shift {:.2f}m".format(self.distance_from_center), (50, 85),
-                    font, 1, (255, 100, 100), 2, cv2.LINE_AA)
+
+        if self.radii:
+            cv2.putText(out, "radii {:.0f}m {:.0f}m".format(*self.radii), (50, 50),
+                        font, 1, (255, 100, 100), 2, cv2.LINE_AA)
+        if self.distance_from_center:
+            cv2.putText(out, "center shift {:.2f}m".format(self.distance_from_center), (50, 85),
+                        font, 1, (255, 100, 100), 2, cv2.LINE_AA)
         cv2.putText(out, self.message, (self.img_size[1] // 2, 65),
                     font, 1.2, (255, 100, 100), 2, cv2.LINE_AA)
 
@@ -243,8 +253,8 @@ def run_single(filename, show_steps=True, save_steps=False):
         img,
         plot_steps=(
             # Steps.original,
-            # Steps.undistort,
-            # Steps.warp,
+            Steps.undistort,
+            Steps.warp,
             Steps.binary,
             Steps.detect_lines,
             Steps.lines_on_road,
@@ -289,10 +299,17 @@ def extract_sequence(filename='video/project_video.mp4'):
 
 
 if __name__ == '__main__':
+    # to collect the steps and grab a sequence of frame use the following commands
+    run_single('test_images/test1.jpg', save_steps=True)
+    extract_sequence()
+
+    # examples on single frames (it will do a "blind scan")
     # run_single('test_images/test5.jpg')
-    # run_single('test_images/test_dots.png')
+    # ... and an hard one
+    # run_single('test_images/sequence/frame_0.jpg')
 
-    run_video()
+    # examples on project video
+    # run_video()
+    # run_video('video/challenge_video.mp4')
 
-    # extract_sequence()
     # run_sequence()
