@@ -5,7 +5,10 @@ import matplotlib.pyplot as plt
 
 lane_message = signal('lane_message')
 
-MIN_FOR_DETECTION = 10
+MIN_FOR_DETECTION = 10  # number of points on sum to consider a line
+MAX_MISSING_WINDOWS = 4  # number of missing windows allowed before a blind-scan
+WINDOWS_Y = 7
+WINDOWS_X = 25
 
 
 def window_mask(width, height, img_ref, center, level):
@@ -18,9 +21,9 @@ def window_mask(width, height, img_ref, center, level):
 def get_window_size(img):
     """ A default windows size from the image """
     # window settings
-    window_width = img.shape[1] // 25
+    window_width = img.shape[1] // WINDOWS_X
     # Break image into 9 vertical layers since image height is 720
-    window_height = img.shape[0] // 7
+    window_height = img.shape[0] // WINDOWS_Y
     margin = img.shape[1] // 30  # How much to slide left and right for searching
     return window_width, window_height, margin
 
@@ -32,6 +35,7 @@ def convolve_and_get_center(conv_signal, start, end, offset):
     if conv_window[
         center] < MIN_FOR_DETECTION:  # we don't have enough points to be sure of the center
         # DONE: When nothing is found, convolution was drifting left of offset
+        # print("convolve: not enought points")
         return None
     else:
         return center + start - offset
@@ -69,9 +73,12 @@ def find_window_centroids(img, window_width, window_height, margin,
         starting_level = 1
     else:
         l_center, r_center = suggested_centers
+        if debug_mode:
+            print("start with suggested", l_center, r_center)
         starting_level = 0
 
     # Go through each layer looking for max pixel locations
+    missing_windows = 0
     for level in range(starting_level, int(maxy / window_height)):
         # convolve the window into the vertical slice of the image
         image_layer = np.sum(img[
@@ -91,17 +98,30 @@ def find_window_centroids(img, window_width, window_height, margin,
         r_max_index = int(min(r_center + offset + margin, img.shape[1]))
 
         # Add what we found for that layer
-        # window_centroids[level] = [l_center + level * 30, r_center + level * 30]
-        if False:
-            delta = -90
-            l_center, r_center = (max([0, min([maxx, l_center + delta])]),
-                                  max([0, min([maxx, r_center + delta])]))
-        else:
-            l_center = convolve_and_get_center(conv_signal, l_min_index, l_max_index,
-                                               offset) or l_center
-            r_center = convolve_and_get_center(conv_signal, r_min_index, r_max_index,
-                                               offset) or r_center
-        if debug_mode: print(l_center, r_center)
+
+        pre_l_center = l_center
+        l_center = convolve_and_get_center(conv_signal, l_min_index, l_max_index, offset)
+        if l_center is None:
+            l_center = pre_l_center
+            missing_windows += 1
+
+        pre_r_center = r_center
+        r_center = convolve_and_get_center(conv_signal, r_min_index, r_max_index, offset)
+        if r_center is None:
+            r_center = pre_r_center
+            missing_windows += 1
+
+        if missing_windows > MAX_MISSING_WINDOWS:
+            if suggested_centers:
+                # we have too many missing windows, let's do a blind scan
+                return find_window_centroids(
+                    img, window_width, window_height, margin,
+                    suggested_centers=None, debug_mode=debug_mode
+                )
+            else:
+                # we were already in blindscan - no detections
+                return None
+        # if debug_mode: print(l_center, r_center)
         window_centroids[level] = [l_center, r_center]
     if debug_mode: print("end with", l_center, r_center)
     return window_centroids
@@ -112,8 +132,7 @@ def get_convoluted_lines(binary):
 
     window_centroids = find_window_centroids(binary, window_width, window_height, margin)
     # If we found any window centers
-    if len(window_centroids) > 0:
-
+    if window_centroids:
         # Points used to draw all the left and right windows
         l_points = np.zeros_like(binary, dtype=np.uint8)
         r_points = np.zeros_like(binary, dtype=np.uint8)
@@ -132,13 +151,15 @@ def get_convoluted_lines(binary):
         return l_points, r_points
 
     # If no window centers found, return None
-    return None, None
+    return None
 
 
 def get_left_right_lanes(img, suggested_centers=None):
     window_width, window_height, margin = get_window_size(img)
     c = find_window_centroids(img, window_width, window_height, margin,
                               suggested_centers=suggested_centers)
+    if c is None:
+        return None, None
     c = np.flipud(c)
 
     leftx = c[:, 0]
@@ -149,20 +170,6 @@ def get_left_right_lanes(img, suggested_centers=None):
 
     left_fit = np.polyfit(ploty, leftx, 2)
     right_fit = np.polyfit(ploty, rightx, 2)
-
-    if False:
-        y = np.linspace(0, 8, num=9)
-        left_fitx = left_fit[0] * y ** 2 + left_fit[1] * y + left_fit[2]
-        right_fitx = right_fit[0] * y ** 2 + right_fit[1] * y + right_fit[2]
-        mark_size = 3
-
-        plt.imshow(img)
-        plt.plot(leftx, 720 - y * 60, 'o', color='red', markersize=mark_size)
-        plt.plot(rightx, 720 - y * 60, 'o', color='blue', markersize=mark_size)
-        plt.xlim(0, 1280)
-        plt.ylim(0, 720)
-        plt.gca().invert_yaxis()  # to visualize as we do the images
-        plt.show()
 
     return left_fit, right_fit
 
@@ -186,24 +193,43 @@ def radius_in_meters(y, leftx, rightx,
     return left_curverad, right_curverad
 
 
-def get_line_points(img, suggested_centers=None):
+def get_line_points(img, suggested_centers=None, previous_fit=None):
+    previous_left_fit, previous_right_fit = previous_fit or (None, None)
+    left_fit, right_fit = get_left_right_lanes(img,
+                                               suggested_centers=suggested_centers)
     img_size = img.shape
     fully = np.linspace(0, img_size[0] - 1,
                         num=img_size[0])  # to cover same y-range as image
 
-    left_fit, right_fit = get_left_right_lanes(img,
-                                               suggested_centers=suggested_centers)
+    messages = []
+    if left_fit is None:
+        if previous_left_fit is not None:
+            messages.append("Reused left lane")
+            left_fit = previous_left_fit
 
-    left_fitx = left_fit[0] * fully ** 2 + left_fit[1] * fully + left_fit[2]
-    right_fitx = right_fit[0] * fully ** 2 + right_fit[1] * fully + right_fit[2]
+    if right_fit is None:
+        if previous_right_fit is not None:
+            messages.append("Reused right lane")
+            right_fit = previous_right_fit
 
-    # let's get where are the lane at the camera position - bottom of screen
-    y = 0
-    left_pos = left_fit[0] * y ** 2 + left_fit[1] * y + left_fit[2]
-    right_pos = right_fit[0] * y ** 2 + right_fit[1] * y + right_fit[2]
+    if left_fit is not None:
+        left_fitx = left_fit[0] * fully ** 2 + left_fit[1] * fully + left_fit[2]
+    else:
+        left_fitx = None
+
+    if right_fit is not None:
+        right_fitx = right_fit[0] * fully ** 2 + right_fit[1] * fully + right_fit[2]
+    else:
+        right_fitx = None
+
+    if messages:
+        lane_message.send(message=", ".join(messages))
+
     extra = dict(
-        left_pos=left_pos,
-        right_pos=right_pos,
+        left_pos=left_fitx[-1] if left_fit is not None else None,
+        right_pos=right_fitx[-1] if right_fit is not None else None,
+        left_fit=left_fit,
+        right_fit=right_fit,
     )
     return fully, left_fitx, right_fitx, extra
 

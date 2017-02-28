@@ -52,12 +52,15 @@ class ProcessPipeline:
         self.message = ""
         self.message_subscribe()
 
+        self.previous_centers = None
+        self.previous_fit = None
+
     def message_subscribe(self):
         """ Subscribe to lane_message events, they can arrive from the pipeline """
         signal('lane_message').connect(self.on_lane_message)
 
     def on_lane_message(self, sender, message=""):
-        # print("Got a message", message)
+        print("Message:", message)
         self.message = message
 
     def camera_calibration(self, img_size):
@@ -124,6 +127,7 @@ class ProcessPipeline:
                 plot_steps=(),
                 ):
         img = self.load(img)
+        self.message = ""  # clean message
 
         if plot_steps:
             f, self.plot_axes = plt.subplots(len(plot_steps))
@@ -175,10 +179,14 @@ class ProcessPipeline:
 
         # get the lines points
         y, leftx, rightx, extra = get_line_points(
-            # cv2.cvtColor(self.binary, cv2.COLOR_RGB2GRAY)
-            self.binary
+            self.binary,
+            self.previous_centers,
+            previous_fit=self.previous_fit,
         )
-        l_center, r_center = leftx[0], rightx[0]  # save the initial lane center
+
+        # save the previous starting point
+        self.previous_centers = extra['left_pos'], extra['right_pos']
+        self.previous_fit = extra['left_fit'], extra['right_fit']
 
         lane_center = statistics.mean([extra['left_pos'], extra['right_pos']])
         self.distance_from_center = (self.img_size[1] // 2 - lane_center) * self.XM_PER_PIX
@@ -235,8 +243,8 @@ def run_single(filename, show_steps=True, save_steps=False):
         img,
         plot_steps=(
             # Steps.original,
-            Steps.undistort,
-            Steps.warp,
+            # Steps.undistort,
+            # Steps.warp,
             Steps.binary,
             Steps.detect_lines,
             Steps.lines_on_road,
@@ -259,16 +267,16 @@ def run_video(filename='video/project_video.mp4'):
 
 
 def run_sequence():
-    image_sequence = sorted(glob.glob("test_images/sequence/*.jpg"))[0:3]
-    # pipeline = ProcessPipeline()
-    # pipeline.output_prefix = "sequence"
-    for filename in image_sequence:
-        run_single(filename)
-        # img = mpimg.imread(filename)
-        # print(filename)
-        # out = pipeline.process(img)
-        # plt.imshow(out)
-        # plt.show()
+    image_sequence = sorted(glob.glob("test_images/sequence/*.jpg"))
+    pipeline = ProcessPipeline()
+    pipeline.output_prefix = "sequence"
+    for filename in image_sequence[:3]:
+        # run_single(filename)
+        img = mpimg.imread(filename)
+        print(filename)
+        out = pipeline.process(img)
+        plt.imshow(out)
+        plt.show()
 
 
 def extract_sequence(filename='video/project_video.mp4'):
@@ -281,8 +289,10 @@ def extract_sequence(filename='video/project_video.mp4'):
 
 
 if __name__ == '__main__':
-    run_single('test_images/test5.jpg')
+    # run_single('test_images/test5.jpg')
     # run_single('test_images/test_dots.png')
-    # run_video()
-    # run_sequence()
+
+    run_video()
+
     # extract_sequence()
+    # run_sequence()
