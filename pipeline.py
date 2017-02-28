@@ -40,6 +40,9 @@ ALL_STEPS = (
 class ProcessPipeline:
     def __init__(self) -> None:
         self.camera = None  # the Camera description
+        self.M = None  # distortion matrix for the birdeye view
+        self.Minv = None  # inverted distortion matrix
+
         self.output_prefix = ""
         self.save_steps = False
         self._save_step = 1
@@ -62,7 +65,7 @@ class ProcessPipeline:
         signal('lane_message').connect(self.on_lane_message)
 
     def on_lane_message(self, sender, message=""):
-        print("Message:", message)
+        # print("Message:", message)
         self.message = message
 
     def camera_calibration(self, img_size):
@@ -148,14 +151,15 @@ class ProcessPipeline:
         if Steps.undistort in plot_steps:
             self.plot(self.undist)
 
-        dstbox = get_dstbox(asphalt_box, shape=self.img_size)
-        srcbox_xy = np.array([(x, y) for y, x in asphalt_box])
-        dstbox_xy = np.array([(x, y) for y, x in dstbox])
+        if self.M is None:
+            dstbox = get_dstbox(asphalt_box, shape=self.img_size)
+            srcbox_xy = np.array([(x, y) for y, x in asphalt_box])
+            dstbox_xy = np.array([(x, y) for y, x in dstbox])
 
-        # let's get the 2 matrix to get the birdeye and back
-        self.M = cv2.getPerspectiveTransform(srcbox_xy, dstbox_xy)
-        self.Minv = cv2.getPerspectiveTransform(dstbox_xy,
-                                                srcbox_xy)
+            # let's get the 2 matrix to get the birdeye and back
+            self.M = cv2.getPerspectiveTransform(srcbox_xy, dstbox_xy)
+            self.Minv = cv2.getPerspectiveTransform(dstbox_xy,
+                                                    srcbox_xy)
 
         # if Steps.undistort in plot_steps:
         #     # when we plot the warp, let's put the ticks in the undist
@@ -301,7 +305,7 @@ def extract_sequence(filename='video/project_video.mp4'):
 if __name__ == '__main__':
     # to collect the steps and grab a sequence of frame use the following commands
     run_single('test_images/test1.jpg', save_steps=True)
-    extract_sequence()
+    # extract_sequence()
 
     # examples on single frames (it will do a "blind scan")
     # run_single('test_images/test5.jpg')
@@ -309,7 +313,7 @@ if __name__ == '__main__':
     # run_single('test_images/sequence/frame_0.jpg')
 
     # examples on project video
-    # run_video()
+    run_video()
     # run_video('video/challenge_video.mp4')
 
     # run_sequence()
