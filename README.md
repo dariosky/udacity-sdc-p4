@@ -171,11 +171,7 @@ In this case I first try a blind scan, and if even then I'm below a certain thre
 A video output of the project video is in
 Here is a [link to my video result](video/project_video_output.mp4)
 
-<video controls="controls">
-  <source type="video/mp4" src="video/project_video_output.mp4"></source>
-  <p>Your browser does not support the video element.</p>
-</video>
-
+<iframe width="560" height="315" src="https://www.youtube.com/embed/wQrSSEXhPIA" frameborder="0" allowfullscreen></iframe>
 ---
 
 ### Discussion
